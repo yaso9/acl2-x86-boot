@@ -75,6 +75,210 @@
 
 ; (local (xdoc::set-default-parents bigmem))
 
+; Sets represented as ordered lists.
+
+(defun nat-nat-256-alistp (x)
+  "Alist of nats with bytes."
+  (declare (xargs :guard t))
+  (if (atom x)
+      (null x)
+    (and (consp (car x))
+         (let* ((l  (car x))
+                (la (car l))
+                (v  (cdr l)))
+           (and (natp la)
+                (natp v)
+                (< v 256)
+                (nat-nat-256-alistp (cdr x)))))))
+
+(defun setp (x)
+  "Ordered list of objects."
+  (declare (xargs :guard (nat-nat-256-alistp x)))
+  (if (or (atom x)
+          (atom (cdr x)))
+      t
+    (let* ((a  (car x))
+           (aa (car a))
+           (b  (cadr x))
+           (ba (car b)))
+      (and (< aa ba)
+           (setp (cdr x))))))
+
+#|
+(defun orderedp-two (x)
+  (declare (xargs :guard (consp x)))
+  (if (atom (cdr x))
+      (null (cdr x))
+    (let ((a (car x))
+          (b (cadr x)))
+      (and (<< a b)
+           (orderedp-two (cdr x))))))
+
+(defun orderedp (x)
+  (declare (xargs :guard t))
+  (if (atom x)
+      (null x)
+    (orderedp-two x)))
+
+(defthm orderedp-is-setp
+  ;; An efficiency observation.
+  (equal (orderedp x)
+         (setp x)))
+
+(encapsulate
+  ()
+  (local
+   (defthm not-orderedp-when-a-in-x-and-<<-a-car-x
+     (implies (and (member-equal a x)
+                   (<< a (car x)))
+              (not (setp x)))))
+
+  (defthm orderedp-implies-no-duplicates
+    (implies (setp x)
+             (no-duplicatesp-equal x))))
+|#
+
+
+(defun insrt (a v x)
+  "Insert E into ordered set X."
+  (declare (xargs :guard (and (natp a)
+                              (natp v)
+                              (< v 256)
+                              (nat-nat-256-alistp x)
+                              (setp x))))
+  (if (atom x)
+      (list (cons a v))
+    (let* ((l  (car x))
+           (la (car l))
+           (r  (cdr x)))
+      (if (< a la)
+          (cons (cons a v) x)
+        (if (= a la)
+            (cons (cons a v) r)
+          (cons l
+                (insrt a v r)))))))
+
+(defthm nat-nat-256-alistp-insrt
+  (implies (and (natp a)
+                (natp v)
+                (< v 256)
+                (nat-nat-256-alistp x))
+           (nat-nat-256-alistp (insrt a v x))))
+
+(defthm setp-insrt
+  (implies  (and (natp a)
+                 (natp v)
+                 (< v 256)
+                 (nat-nat-256-alistp x)
+                 (setp x))
+           (setp (insrt a v x))))
+
+
+(defun mbr (a x)
+  "Access address A if in ordered alistp X."
+  (declare (xargs :guard (and (natp a)
+                              (nat-nat-256-alistp x)
+                              (setp x))
+                  :verify-guards nil))
+  (if (atom x)
+      NIL
+    (let* ((l (car x))
+           (la (car l))
+           (r (cdr x)))
+      (mbe :logic
+           (if (= a la)
+               l
+             (mbr a r))
+           :exec
+           (if (< a la)
+               NIL
+             (if (= a la)
+                 l
+               (mbr a r)))))))
+
+(defthm not-mbr-when-addr-a-is-<-addr-car-x
+  (implies (and (natp a)
+                (nat-nat-256-alistp x)
+                (setp x)
+                (< a (caar x)))
+           (not (mbr a x)))
+  :hints
+  (("Goal" :induct (mbr a x))))
+
+(verify-guards mbr)  ;; CS340d: show TRACE$ difference
+
+
+(defthm mbr-insrt
+  ;; Item E is a member after its insertion.
+  (implies (and (nat-nat-256-alistp x)
+                (setp x))
+           (mbr a (insrt a v x))))
+
+(defthm mbr-a-mbr-insrt
+  ;; Item A still a member after any insertion.
+  (implies (and (nat-nat-256-alistp x)
+                (setp x)
+                (mbr a x))
+           (mbr a (insrt a v x))))
+
+
+(defun del (a x)
+  "Delete A from set X, or do nothing if no address A in X."
+  ;; Observation: When (SETP x), we can stop after a deletion.
+  (declare (xargs :guard (and (natp a)
+                              (nat-nat-256-alistp x)
+                              (setp x))
+                  :verify-guards nil))
+  (if (atom x)
+      NIL
+    (let* ((l (car x))
+           (la (car l))
+           (r (cdr x)))
+      (mbe :logic
+           (if (equal a la)
+               r
+             (cons l
+                   (del a r)))
+           :exec
+           (if (< a la)
+               x
+             (if (= a la)
+                 r
+               (cons l
+                     (del a r))))))))
+
+(defthm del-when-addr-a-is-<-addr-car-x
+  ;; Help for the DEL guard proof.
+  (implies (and (natp a)
+                (nat-nat-256-alistp x)
+                (setp x)
+                (< a (caar x)))
+           (equal (del a x) x)))
+
+(verify-guards del)  ;; CS340d: show TRACE$ difference
+
+
+(defthm setp-del
+  ;; Deletion leaves a set.
+  (implies (setp x)
+           (setp (del a x))))
+
+(defthm not-mbr-del
+  ;; Item E not a member after its deletion.
+  (implies (and (natp a)
+                (setp x))
+           (not (mbr a (del a x)))))
+
+(defthm mbr-a-del-e
+  ;; Item A still a member if different element deleted.
+  (implies (and (not (equal a a2))
+                (setp x))
+           (equal (mbr a (del a2 x))
+                  (mbr a x))))
+
+; Ordered ALIST memory operations complete.
+
+
 (defun formal-force-list (x)
  (if (atom x)
      nil
